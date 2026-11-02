@@ -2,7 +2,7 @@
 
 # Pipeline de Telemetría Vehicular en AWS
 
-**Arquitectura de datos como Código: ingesta, almacenamiento, procesamiento y consumo, modelados y desplegados con Terraform**
+**Infraestructura como Código para telemetría vehicular: almacenamiento, mensajería, warehouse e identidad del procesador en AWS**
 
 🎓 Proyecto académico — Big Data, Universidad EIA (2026-2)
 
@@ -10,7 +10,6 @@
 [![AWS](https://img.shields.io/badge/AWS-Provider%20v6-FF9900?logo=amazonaws&logoColor=white)](https://registry.terraform.io/providers/hashicorp/aws/latest)
 [![HCL](https://img.shields.io/badge/HCL-Infraestructura%20como%20Código-5C4EE5)](https://www.terraform.io/language)
 [![Redshift Serverless](https://img.shields.io/badge/Amazon-Redshift%20Serverless-8C4FFF?logo=amazonredshift&logoColor=white)](https://aws.amazon.com/redshift/redshift-serverless/)
-[![License](https://img.shields.io/badge/Licencia-MIT-lightgrey)](#licencia)
 
 </div>
 
@@ -31,7 +30,6 @@
 - [Contraste con la plantilla de referencia (GCP)](#contraste-con-la-plantilla-de-referencia-gcp)
 - [Aprendizajes clave](#aprendizajes-clave)
 - [Contexto académico](#contexto-académico)
-- [Licencia](#licencia)
 - [Autores](#autores)
 
 ---
@@ -40,9 +38,9 @@
 
 Diseño de un pipeline de datos en la nube como **Infraestructura como Código (IaC)** con Terraform, modelando las cuatro capas de un pipeline moderno — ingesta, almacenamiento (data lake), procesamiento y consumo (warehouse) — sobre **Amazon Web Services**, más los permisos de mínimo privilegio que las conectan.
 
-El caso de uso es la telemetría de una flota simulada de vehículos (velocidad, combustible, ubicación). El flujo separa los datos originales, la notificación de llegada, el procesamiento y la consulta histórica: un productor guarda cada evento en S3, S3 notifica por SNS, SNS entrega a una cola SQS, un procesador consume la referencia y la inserta en Redshift Serverless, y el analista consulta una vista deduplicada.
+El caso de uso es la telemetría de una flota simulada de vehículos (velocidad, combustible, ubicación). En el flujo diseñado, un productor adaptado guardaría cada evento en S3, S3 notificaría por SNS y SNS entregaría la referencia a una cola SQS. Un procesador leería el JSON del lake y lo insertaría en Redshift Serverless; el analista consultaría una vista deduplicada.
 
-A diferencia de los talleres anteriores (MapReduce y Spark, procesamiento de datos ya almacenados), este trabajo no procesa datos: **diseña y sustenta la infraestructura en la que un pipeline real correría**, con énfasis explícito en IAM y mínimo privilegio.
+El repositorio contiene la configuración Terraform, el informe de arquitectura y capturas de validación y despliegue. **El productor adaptado y la función de procesamiento no están implementados**; se modelan sus permisos y la identidad del futuro job. Las evidencias disponibles documentan la creación de infraestructura, sin demostrar procesamiento de telemetría de extremo a extremo.
 
 ## Arquitectura del pipeline
 
@@ -59,7 +57,7 @@ flowchart LR
     D --> I[(SQS de errores<br/>tras reintentos fallidos)]
 ```
 
-Los elementos discontinuos (productor y procesador) representan **identidad y permisos modelados**, no ejecución desplegada: Terraform crea el rol IAM y la política del procesador, pero no una función Lambda ficticia ni un productor real — ambos quedan como adaptación futura, según el alcance del taller.
+Los elementos discontinuos representan la ejecución propuesta. Terraform define el rol IAM y la política del procesador, además de una política para el futuro productor. La adaptación del productor y la función Lambda quedan pendientes; la política del productor aún no se adjunta a una identidad concreta.
 
 ## Capas modeladas
 
@@ -73,7 +71,7 @@ Los elementos discontinuos (productor y procesador) representan **identidad y pe
 
 ## Permisos y mínimo privilegio
 
-Sección obligatoria del taller: la pista explícita es que la parte de IAM es la que separa un buen diseño de uno mediocre.
+El principio de mínimo privilegio se aplica limitando las acciones y los recursos a lo que necesita cada identidad. El procesador puede consumir la ingesta, leer los originales y escribir en la tabla; la administración de recursos utiliza una identidad separada.
 
 | Acceso del procesador | Permiso y alcance | Por qué se necesita |
 |---|---|---|
@@ -104,7 +102,7 @@ El simulador emite ~1 lectura/s de cada uno de 8 vehículos (≈8 eventos/s); 10
 
 ## Despliegue real (evidencia)
 
-Aunque el despliegue es **opcional** según el enunciado (no se evalúa, y no desplegar no baja la nota), se desplegó la arquitectura completa en una cuenta de AWS propia para documentar el plus:
+El despliegue es **opcional** y puede aportar un plus según el enunciado. La captura [`evidencias/terraform-apply.png`](evidencias/terraform-apply.png) muestra la creación exitosa de los recursos definidos en Terraform:
 
 ```
 terraform apply
@@ -120,19 +118,35 @@ producer_policy_arn      = "arn:aws:iam::052022403573:policy/flota-telemetria-pr
 warehouse_workgroup_name = "flota-telemetria"
 ```
 
-Los 32 recursos (VPC, subredes, S3, SNS, SQS, Redshift Serverless y las sentencias SQL de esquema/tabla/vista/permisos) se crearon sin errores. Los recursos se destruyeron (`terraform destroy`) inmediatamente después de tomar la evidencia, para no mantener cargos activos de Redshift Serverless.
+La salida muestra **32 recursos añadidos, 0 modificados y 0 destruidos**, e incluye la finalización de las sentencias SQL de creación de la vista y asignación de permisos. Las capturas de consola AWS muestran los servicios del proyecto:
 
-La captura obligatoria de `terraform validate` está en [`terraform-validate.png`](./terraform-validate.png).
+| Evidencia | Archivo |
+|---|---|
+| Validación obligatoria exitosa | [terraform-validate.png](evidencias/terraform-validate.png) |
+| Ejecución exitosa de `terraform apply` | [terraform-apply.png](evidencias/terraform-apply.png) |
+| Bucket del lake | [AWS-S3.png](evidencias/AWS-S3.png) |
+| Tópico SNS | [AWS-SNS.png](evidencias/AWS-SNS.png) |
+| Cola principal y cola de errores | [AWS-SQS.png](evidencias/AWS-SQS.png) |
+| Namespace de Redshift Serverless | [AWS-Redshift.png](evidencias/AWS-Redshift.png) |
+
+**Estado de eliminación:** el repositorio no contiene una captura o registro de `terraform destroy`. Estas evidencias no permiten confirmar si los recursos siguen activos ni si existen cargos pendientes. La validación es local; el despliegue sí utiliza servicios AWS y puede generar costos.
 
 ## Estructura del repositorio
 
 ```
 .
-├── main.tf                              # Arquitectura completa: 4 capas + IAM, comentada
-├── terraform-validate.png               # Captura obligatoria: terraform validate exitoso
-├── Informe_Arquitectura_Flota_AWS.pdf   # Informe de arquitectura (diagrama, justificación, permisos, escalabilidad)
-├── Trabajo4_Terraform_Enunciado.docx    # Enunciado del taller
-├── .terraform.lock.hcl                  # Lock de versiones del provider
+├── main.tf                             # Cuatro capas y permisos, comentados
+├── README.md                           # Descripción y evidencias disponibles
+├── Informe_Arquitectura_Flota_AWS.pdf  # Informe de cinco páginas, incluye evidencia del bonus
+├── Trabajo4_Terraform_Enunciado.docx   # Enunciado del taller
+├── evidencias/
+│   ├── terraform-validate.png          # Validación local exitosa
+│   ├── terraform-apply.png             # Creación de 32 recursos
+│   ├── AWS-S3.png
+│   ├── AWS-SNS.png
+│   ├── AWS-SQS.png
+│   └── AWS-Redshift.png
+├── .terraform.lock.hcl                 # Versión y checksums del proveedor
 └── .gitignore
 ```
 
@@ -141,7 +155,7 @@ La captura obligatoria de `terraform validate` está en [`terraform-validate.png
 | Categoría | Herramientas |
 |---|---|
 | IaC | Terraform `>= 1.11.0, < 2.0` |
-| Proveedor | `hashicorp/aws ~> 6.0` |
+| Proveedor | `hashicorp/aws ~> 6.0`; versión fijada en el lock: `6.71.0` |
 | Ingesta | Amazon SNS (estándar) + Amazon SQS (+ DLQ con redrive policy) |
 | Almacenamiento | Amazon S3 (privado, versionado, cifrado SSE, deny de transporte inseguro) |
 | Procesamiento | Rol IAM + política inline (identidad del futuro job) |
@@ -151,22 +165,33 @@ La captura obligatoria de `terraform validate` está en [`terraform-validate.png
 ## Instalación y uso
 
 ```powershell
-# 1. Instalar Terraform (o usar el binario incluido en tools/)
+# 1. Instalar Terraform; el repositorio no incluye el ejecutable
 # https://developer.hashicorp.com/terraform/install
 
-# 2. Inicializar el proveedor
-terraform init
+# 2. Inicializar el proveedor para validación local
+terraform init -backend=false
 
-# 3. Validar sintaxis y lógica — gratis, no crea nada (entregable obligatorio)
+# 3. Comprobar formato y validar la configuración sin crear recursos
+terraform fmt -check
 terraform validate
+```
 
-# 4. (Opcional, genera costos reales) Revisar el plan y desplegar
+La validación comprueba la configuración y el esquema del proveedor; no ejecuta las sentencias SQL ni verifica los permisos efectivos en AWS. Se debe conservar `.terraform.lock.hcl` para reproducir la versión del proveedor.
+
+El despliegue opcional requiere una cuenta y credenciales AWS con permisos de aprovisionamiento. Los siguientes comandos corresponden al despliegue y a la eliminación, no son necesarios para validar:
+
+```powershell
+# Revisar los cambios propuestos antes de crear infraestructura
 terraform plan
+
+# Crear infraestructura: puede generar costos en AWS
 terraform apply
 
-# 5. Si se desplegó, destruir apenas se documente la evidencia
+# Eliminar los recursos gestionados desde el mismo estado de Terraform
 terraform destroy
 ```
+
+Antes de considerar cerrado un despliegue, hay que comprobar la finalización de la eliminación y el estado de los servicios en la cuenta utilizada. Eliminar recursos no cancela el consumo ya realizado. El bucket tiene `force_destroy = false`; si contiene objetos o versiones, su eliminación puede requerir gestionarlos previamente.
 
 ## Contraste con la plantilla de referencia (GCP)
 
@@ -185,16 +210,12 @@ La decisión de nube (AWS) se sustenta en el informe de arquitectura; el patrón
 
 - El mínimo privilegio no es solo una política de "solo lectura": significa enumerar exactamente las acciones y el alcance (`Resource`) que una identidad necesita, y nada más — incluso dentro de un mismo servicio (p. ej., `INSERT` sin `SELECT`/`UPDATE`/`DELETE`/`DROP` en Redshift).
 - Las políticas que conectan dos servicios administrados (S3→SNS, SNS→SQS) también deben acotarse con condiciones (`SourceArn`/`SourceAccount`); dejar el principal abierto (`"*"`) sin condición es un error común que una condición cierra sin perder funcionalidad.
-- `terraform plan` antes de `apply` es la forma de verificar, sin costo, que lo que se va a crear coincide exactamente con lo diseñado — en este proyecto el plan mostró 32 recursos, todos esperados, 0 inesperados.
+- `terraform plan` permite revisar los cambios propuestos antes de `apply`. La evidencia disponible en este repositorio muestra el resultado de `apply` con 32 recursos creados; no se incluye una captura independiente del plan.
 - Redshift Serverless con Data API permite ejecutar SQL de administración (crear esquema, tabla, vista, usuario IAMR y permisos) directamente desde Terraform, sin abrir un puerto SQL ni gestionar una conexión JDBC.
 
 ## Contexto académico
 
 Desarrollado como Trabajo 4 (evaluación final) de la asignatura Big Data, Universidad EIA (2026-2), prof. Alejandro Mery Agudelo, en parejas. El taller pedía diseñar y sustentar con Terraform una arquitectura de pipeline de datos en la nube (4 capas + IAM), validar la sintaxis con `terraform validate`, y entregar un informe de arquitectura en PDF — el despliegue real era opcional.
-
-## Licencia
-
-Este proyecto se distribuye bajo licencia [MIT](LICENSE). Los datos de telemetría son simulados, para fines académicos.
 
 ## Autores
 
